@@ -26,14 +26,18 @@ except Exception as e:
 def preprocess_text(text):
     # Lowercasing
     text = str(text).lower()
-    # Remove URLs, special characters, and numbers
-    text = re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)
+    
+    # NEW FIX: Remove 'http://' or 'https://' but KEEP the actual link text (like bit.ly)
+    text = re.sub(r'https?://', '', text)
+    text = re.sub(r'www\.', '', text)
+    
+    # Remove special characters and numbers (leaves 'bit ly' for the AI to read)
     text = re.sub(r'\W', ' ', text)
     text = re.sub(r'\d+', '', text)
+    
     # Remove extra whitespace
     text = re.sub(r'\s+', ' ', text).strip()
     return text
-
 # User Interface
 user_input = st.text_area("SMS Message:", placeholder="e.g. Alert Amigo! Ang imo BDO account gina-lock...")
 
