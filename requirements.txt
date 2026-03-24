@@ -1,6 +1,7 @@
 streamlit
-fasttext
+fasttext-wheel
 scikit-learn
 pandas
 numpy
 joblib
+nltk
