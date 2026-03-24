@@ -3,104 +3,69 @@ import fasttext
 import joblib
 import numpy as np
 import re
-import nltk
-from nltk.tokenize import word_tokenize
 
-# --- ALGORITHM SETUP ---
-
-# 1. Initialize NLP Resources (Required for the Tokenization step)
-@st.cache_resource
-def setup_nltk():
-    try:
-        nltk.data.find('tokenizers/punkt')
-    except LookupError:
-        nltk.download('punkt')
-
-setup_nltk()
-
-# 2. Define Custom Stop Words (Matches Chapter III Methodology)
-# These words are eliminated as they do not contribute to smishing patterns[cite: 44, 128].
-custom_stopwords = set([
-    'ang', 'mga', 'nga', 'sa', 'sang', 'kay', 'kag', 'ko', 'mo', 'ni', 
-    'is', 'the', 'and', 'to', 'a', 'of', 'in', 'it', 'for', 'on'
-])
-
-# 3. Load Trained Models
-@st.cache_resource
-def load_models():
-    # FastText handles morphologically rich Hiligaynon subwords[cite: 28, 52].
-    ft = fasttext.load_model("hiligaynon_fasttext.bin")
-    # Stacking Ensemble combines GNB, LR, and RF[cite: 35, 135].
-    ensemble = joblib.load("stacking_ensemble_model.pkl")
-    return ft, ensemble
-
-# --- THE CORE ALGORITHM (PREPROCESSING) ---
-
-def preprocess_text(text):
-    """
-    Step-by-step pipeline: Lowercasing, Noise Removal, Tokenization, 
-    and Stop Word Elimination[cite: 44, 124, 125].
-    """
-    # a. Consistency: Convert to lowercase [cite: 126]
-    text = str(text).lower()
-    
-    # b. Noise Removal: Strip http/https but keep domain keywords like 'bit.ly' [cite: 127, 173]
-    text = re.sub(r'https?://', '', text)
-    text = re.sub(r'www\.', '', text)
-    
-    # c. Special Character & Numerical Handling [cite: 127]
-    text = re.sub(r'\W', ' ', text)
-    text = re.sub(r'\d+', '', text)
-    
-    # d. Tokenization: Break text into individual units [cite: 130]
-    tokens = word_tokenize(text)
-    
-    # e. Stop Word Elimination: Remove high-frequency non-contributing words [cite: 128]
-    filtered_tokens = [word for word in tokens if word not in custom_stopwords]
-    
-    # f. Final Output String [cite: 46]
-    return ' '.join(filtered_tokens)
-
-# --- USER INTERFACE ---
-
+# Set up the dashboard page
 st.set_page_config(page_title="Hiligaynon Smishing Detector", page_icon="🛡️")
 st.title("🛡️ Hiligaynon Smishing Detector")
-st.subheader("BSCS Thesis Project: FastText & Stacking Ensemble")
+st.write("Enter a text message below to check if it is Legitimate or Smishing.")
+
+# Load the trained models (cached so they only load once)
+@st.cache_resource
+def load_models():
+    ft = fasttext.load_model("hiligaynon_fasttext.bin")
+    ensemble = joblib.load("stacking_ensemble_model.pkl")
+    return ft, ensemble
 
 try:
     ft_model, stacking_model = load_models()
 except Exception as e:
-    st.error("Model files not found. Please ensure .bin and .pkl files are in the repository.")
+    st.error("Error loading models. Ensure 'hiligaynon_fasttext.bin' and 'stacking_ensemble_model.pkl' are in the same folder as this script.")
     st.stop()
 
-user_input = st.text_area("Input Raw SMS Text:", placeholder="Paste the Hiligaynon or English message here...")
+# Preprocessing function matching Chapter III methodology
+def preprocess_text(text):
+    # Lowercasing
+    text = str(text).lower()
+    
+    # NEW FIX: Remove 'http://' or 'https://' but KEEP the actual link text (like bit.ly)
+    text = re.sub(r'https?://', '', text)
+    text = re.sub(r'www\.', '', text)
+    
+    # Remove special characters and numbers (leaves 'bit ly' for the AI to read)
+    text = re.sub(r'\W', ' ', text)
+    text = re.sub(r'\d+', '', text)
+    
+    # Remove extra whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+# User Interface
+user_input = st.text_area("SMS Message:", placeholder="e.g. Alert Amigo! Ang imo BDO account gina-lock...")
 
-if st.button("Run Detection Algorithm"):
+if st.button("Analyze Message"):
     if user_input.strip() == "":
-        st.warning("Please enter text to analyze.")
+        st.warning("Please enter a message to analyze.")
     else:
-        # 1. Processing: Apply NLP Pipeline
-        preprocessed_text = preprocess_text(user_input)
+        # 1. Clean the text
+        cleaned_text = preprocess_text(user_input)
         
-        # 2. Vectorization: Convert to 300D semantic vector [cite: 53, 132]
-        vector = ft_model.get_sentence_vector(preprocessed_text)
+        # 2. Extract 300-dimensional FastText vector
+        vector = ft_model.get_sentence_vector(cleaned_text)
         vector_reshaped = np.array(vector).reshape(1, -1)
         
-        # 3. Classification: Stacking Ensemble Prediction [cite: 142, 144]
+        # 3. Predict using the Stacking Ensemble
         prediction = stacking_model.predict(vector_reshaped)[0]
         probabilities = stacking_model.predict_proba(vector_reshaped)[0]
         
         st.divider()
         
-        # 4. Final Output [cite: 145]
+        # 4. Display the Results
         if prediction == 1:
-            st.error(f"🚨 **SMISHING DETECTED** (Confidence: {probabilities[1]*100:.2f}%)")
-            st.info("This message matches known fraudulent patterns or malicious link structures.")
+            st.error(f"🚨 **WARNING: This is a Smishing Message!** (Confidence: {probabilities[1]*100:.2f}%)")
         else:
-            st.success(f"✅ **LEGITIMATE MESSAGE** (Confidence: {probabilities[0]*100:.2f}%)")
+            st.success(f"✅ **SAFE: This is a Legitimate Message.** (Confidence: {probabilities[0]*100:.2f}%)")
             
-        # Behind the scenes for the defense panel
-        with st.expander("Technical Algorithm Breakdown"):
-            st.write(f"**Preprocessed (Tokens):** {preprocessed_text}")
-            st.write(f"**GNB/LR/RF Ensemble Probability:** {probabilities[1]:.4f}")
-            st.write("**Model Architecture:** FastText Subword Embeddings + Stacking Meta-Classifier")
+        # Optional: Show behind-the-scenes data for the panelists
+        with st.expander("View Algorithm Details"):
+            st.write(f"**Cleaned Text:** {cleaned_text}")
+            st.write(f"**Smishing Probability:** {probabilities[1]:.4f}")
+            st.write(f"**Legitimate Probability:** {probabilities[0]:.4f}")
